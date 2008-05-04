@@ -3,3 +3,4 @@ Revision history for Tk-TextVi
 0.01    3 May 2008
         First upload.
 
+        (0.011) Tk missing from PREREQ_PM
