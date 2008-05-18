@@ -3,7 +3,7 @@ package Tk::TextVi;
 use strict;
 use warnings;
 
-our $VERSION = '0.011';
+our $VERSION = '0.012';
 
 #use Data::Dump qw|dump|;
 
@@ -477,6 +477,7 @@ sub InsertKeypress {
     # Insert mode
     elsif( $w->{VI_MODE} eq 'i' ) {
         if( $key eq ESC ) {
+            $w->addGlobEnd;
             $w->viMode('n');
             $w->SetCursor( 'insert -1c' )
                 if( $w->compare( 'insert', '!=', 'insert linestart' ) );
@@ -512,6 +513,7 @@ sub InsertKeypressNormal {
     my $res;
 
     $w->{VI_PENDING} .= $key;       # add to pending key strokes
+
     eval { $res = $w->EvalKeys(); };# try to process as a command
 
     if( $@ ) {
@@ -618,6 +620,8 @@ sub vi_n_d {
     my ($w,$k,$n,$r,$m) = @_;
     die X_BAD_STATE if $m;
 }
+
+=end comment
 
 =cut
 
@@ -745,6 +749,7 @@ sub vi_n_h {
 sub vi_n_i {
     my ($w,$k,$n,$r,$m) = @_;
     $w->viMode('i');
+    $w->addGlobStart;
 }
 
 sub vi_n_j {
@@ -915,7 +920,6 @@ sub vi_n_t {
 #
 sub vi_n_u {
     my ($w,$k,$n,$r,$m) = @_;
-    $w->undo;
     $w->undo;
 }
 
@@ -1178,6 +1182,8 @@ sub vi_c_ {
     my ($w,$force,$arg) = @_;
 }
 
+=end comment
+
 =cut
 
 sub vi_c_quit {
@@ -1224,7 +1230,7 @@ Tk::TextVi - Tk::Text widget with Vi-like commands
 
     use Tk::TextVi;
 
-    $textvi = $window-E<gt>TextVi( -option =E<gt> value, ... );
+    $textvi = $window->TextVi( -option => value, ... );
 
 =head1 DESCRIPTION
 
@@ -1256,6 +1262,8 @@ Callback invoked when the parent application needs to take action.  If you retur
 
     'quit'      The :quit command has been entered
     'split'     :split (see EXPERIMENTAL FEATURES below)
+
+=back
 
 =head2 Methods
 
@@ -1421,6 +1429,8 @@ Scalar references will be treated as a sequence of keys to process.  All other r
 
 =head3 Exceptions
 
+=over 4
+
 =item X_NO_MOTION
 
 If a true value is passed for $wantmotion and the function is not a motion command, die with this value.
@@ -1433,7 +1443,11 @@ Use when additional key presses are required to complete the command.
 
 For when the command can't complete and panic is more appropriate than doing nothing.
 
+=back
+
 =head3 Methods
+
+=over 4
 
 =item $text->EvalKeys( $keys, $count, $register, $wantmotion )
 
@@ -1458,6 +1472,8 @@ Store the contents of $text into the specified register.  The text will also be 
 =item $text->registerGet( $register )
 
 Returns the text stored in a register
+
+=back
 
 =head1 BUGS
 
@@ -1511,7 +1527,7 @@ This modules makes it much easier to commit the programmer's third deadly sin.
 
 =head1 AUTHOR
 
-Joseph Strom, C<< <j-strom.verizon.net> >>
+Joseph Strom, C<< <j-strom@verizon.net> >>
 
 =head1 COPYRIGHT & LICENSE
 

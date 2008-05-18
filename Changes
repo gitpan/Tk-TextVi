@@ -1,5 +1,16 @@
 Revision history for Tk-TextVi
 
+0.012   18 May 2008
+        Several errors in the POD are fixed (Gratia, Michal Spacek).
+
+        Undo now works with insert mode and works a bit better with
+        normal commands.
+
+        Tested under Tk version 804.027 with no problems.  The required
+        version has been reduced.
+
+        The demo script is now correctly listed in Makefile.PL.
+
 0.01    3 May 2008
         First upload.
 
