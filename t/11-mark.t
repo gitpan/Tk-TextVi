@@ -10,7 +10,7 @@ use warnings;
 
 use Tk;
 use Tk::TextVi;
-use Test::Simple tests => 2;
+use Test::Simple tests => 4;
 
 my $mw = new MainWindow;
 
@@ -38,3 +38,9 @@ ok( $t->index('insert') eq '1.5', 'Set and jumped to mark' );
 test( '2.5', 'ma' );
 test( '6.9', '`a' );
 ok( $t->index('insert') eq '2.5', 'Reset and jumped to mark' );
+
+test( '2.5', "v5lj\c[`<" );
+ok( $t->index('insert') eq '2.5', 'Visual mode sets < mark' );
+
+test( '1.0', '`>' );
+ok( $t->index('insert') eq '3.10', 'Visual mode sets > mark' );

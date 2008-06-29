@@ -10,7 +10,7 @@ use warnings;
 
 use Tk;
 use Tk::TextVi;
-use Test::Simple tests => 4;
+use Test::Simple tests => 5;
 
 my $mw = new MainWindow;
 my $t = $mw->TextVi();
@@ -76,6 +76,19 @@ With a blank line:
 
 This line contains four i's
 With a blank line:
+0123456789
+END
+
+test( '1.0','"ayy' );
+test( '2.0','"Ayy"ap' );
+ok( $t->Contents eq <<END, 'Capital letter register for append' );
+Testing Tk::TextVi
+Some lines of sample text
+Testing Tk::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
 0123456789
 END
 

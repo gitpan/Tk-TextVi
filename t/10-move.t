@@ -11,7 +11,7 @@ use warnings;
 
 use Tk;
 use Tk::TextVi;
-use Test::Simple tests => 21;
+use Test::Simple tests => 24;
 
 my $mw = new MainWindow;
 my $t = $mw->TextVi();
@@ -109,4 +109,15 @@ ok( $t->index('insert') eq '4.0', 'Normal-$ on empty line' );
 
 test( '5.5', '2$' );
 ok( $t->index('insert') eq '6.9', 'Normal-$ advances count-1 lines' );
+
+# :
+
+test( '1.0', ":3\n" );
+ok( $t->index('insert') eq '3.0', ':range to set line' );
+
+test( '1.0', ":.+2\n" );
+ok( $t->index('insert') eq '3.0', ':range with . and +' );
+
+test( '3.0', ":.-2\n" );
+ok( $t->index('insert') eq '1.0', ':range with . and -' );
 

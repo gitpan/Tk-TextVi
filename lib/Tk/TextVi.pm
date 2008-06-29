@@ -3,7 +3,7 @@ package Tk::TextVi;
 use strict;
 use warnings;
 
-our $VERSION = '0.012';
+our $VERSION = '0.013';
 
 #use Data::Dump qw|dump|;
 
@@ -30,11 +30,26 @@ sub F_STAT () { 1 }
 sub F_MSG () { 2 }
 sub F_ERR () { 4 }
 
+# Indentifier-legal names for special characters
+my %names = (
+    '<' => '_lt',
+    '>' => '_gt',
+);
+
+my %settings = (
+    # name => [ value, default, type ]
+    # name => \'longname'
+
+    'softtabstop' => [ 0, 0, 'int' ],
+    'sts' => \'softtabstop',
+);
+
 # Default command mappings and what file holds their test data
 my %map = (
     n => {
         a => \&vi_n_a,                              # 30-insert
         d => \&vi_n_d,                              # 20-delete
+        e => \'E',
         f => \&vi_n_f,                              # 13-findchar
         g => {
             a => \&vi_n_ga,                         # 60-info
@@ -53,14 +68,17 @@ my %map = (
         r => \&vi_n_r,                              # 21-replace
         t => \&vi_n_t,                              # 13-findchar
         u => \&vi_n_u,
-        v => \&vi_n_v,
+        v => \&vi_n_v,                              # 32-vchar
+        w => \'W',
         x => \'dl',                                 # 20-delete
         y => \&vi_n_y,                              # 40-register
 
         D => \'d$',                                 # 20-delete
+        E => \&vi_n_E,                              # 12-word
         G => \&vi_n_G,                              # 10-move
         O => \&vi_n_O,                              # 30-insert
-        V => \&vi_n_V,
+        V => \&vi_n_V,                              # 33-vline
+        W => \&vi_n_W,                              # 12-word
 
         0 => [ 'insert linestart', 'char', 'inc' ], # 10-move
 
@@ -72,17 +90,20 @@ my %map = (
         '/' => \&vi_n_fslash,                       # 15-search
     },
     c => {
+        '' => \&vi_c_none,
         q => \&vi_c_quit,
         quit => \&vi_c_quit,
         map => \&vi_c_map,
         noh => \&vi_c_nohlsearch,
         nohl => \&vi_c_nohlsearch,
         nohlsearch => \&vi_c_nohlsearch,
+        set => \&vi_c_set,
         split => \&vi_c_split,
     },
     v => {
         d => \&vi_n_d,
         f => \&vi_n_f,
+        e => \'E',
         g => {
             g => [ '1.0', 'line', 'inc' ],
         },
@@ -91,14 +112,18 @@ my %map = (
         k => \&vi_n_k,
         l => \&vi_n_l,
         t => \&vi_n_t,
+        w => \'W',
 
+        E => \&vi_n_E,
         G => \&vi_n_G,
+        W => \&vi_n_W,
 
         0 => [ 'insert linestart', 'char', 'inc' ],
         '`' => \&vi_n_backtick,
         '$' => \&vi_n_dollar,
         '%' => \&vi_n_percent,
         '"' => \&vi_n_quote,
+        ':' => \&vi_n_colon,
     }
 );
 
@@ -141,10 +166,10 @@ sub Populate {
     $w->tagConfigure( 'VI_SEARCH', -background => '#FFFF00' );
 
     $w->ConfigSpecs(
-        -statuscommand  =>  [ 'CALLBACK', 'statusCommand', 'StatusCommand', 'NoOp' ],
-        -messagecommand => ['CALLBACK', 'messageCommand', 'MessageCommand', 'NoOp' ],
-        -errorcommand => [ 'CALLBACK', 'errorCommand', 'ErrorCommand', 'NoOp' ],
-        -systemcommand => ['CALLBACK', 'systemCommand', 'SystemCommand', 'NoOp' ],
+        -statuscommand  =>['CALLBACK','statusCommand', 'StatusCommand', 'NoOp'],
+        -messagecommand =>['CALLBACK','messageCommand','MessageCommand','NoOp'],
+        -errorcommand =>  ['CALLBACK','errorCommand',  'ErrorCommand',  'NoOp'],
+        -systemcommand => ['CALLBACK','systemCommand', 'SystemCommand', 'NoOp'],
     );
 }
 
@@ -160,23 +185,28 @@ sub SetCursor {
         $w->tagRemove( 'sel', '1.0', 'end' );
         
         my ($s,$e) = ($w->{VI_VISUAL_START}, 'insert');
+
         if( $w->compare( $e, '<', $s ) ) {
-            $w->tagAdd( 'sel', $e, $s );
+            ($s,$e) = ($e,$s);
         }
-        else {
-            $w->tagAdd( 'sel', $s, $e );
-        }
+
+        $w->tagAdd( 'sel', $s, $e );
+
+        $w->markSet( 'VI_MARK__lt', $s );
+        $w->markSet( 'VI_MARK__gt', $e );
     }
     elsif( $w->{VI_MODE} eq 'V' ) {
         $w->tagRemove( 'sel', '1.0', 'end' );
         
         my ($s,$e) = ($w->{VI_VISUAL_START}, 'insert');
         if( $w->compare( $e, '<', $s ) ) {
-            $w->tagAdd( 'sel', "$e linestart", "$s lineend" );
+            ($s,$e) = ($e,$s);
         }
-        else {
-            $w->tagAdd( 'sel', "$s linestart", "$e lineend" );
-        }
+
+        $w->tagAdd( 'sel', "$s linestart", "$e lineend" );
+
+        $w->markSet( 'VI_MARK__lt', $s );
+        $w->markSet( 'VI_MARK__gt', $e );
     }
 }
 
@@ -237,6 +267,7 @@ sub viMode {
             if $mode !~ m[ ^ [nicvV/] $ ]x;
         $w->{VI_MODE} = $mode;
         $w->{VI_PENDING} = '';
+        $w->tagRemove( 'sel', '1.0', 'end' );
 
         # XXX: Hack
         if( (caller)[0] eq 'Tk::TextVi' ) {
@@ -327,7 +358,7 @@ sub registerStore {
     die X_BAD_STATE if length($register) > 1;
 
     # Read-only registers and blackhole are never written to
-    return if $register =~ /[_:.%#]/;
+    return if $register =~ /[_:.%#0-9]/;
 
     # Always store in the unnamed register
     $w->{VI_REGISTER}{''} = $text;
@@ -338,7 +369,12 @@ sub registerStore {
         $w->clipboardAppend( '--', $text );
     }
     else {
-        $w->{VI_REGISTER}{$register} = $text;
+        if( $register =~ tr/A-Z/a-z/ ) {
+            $w->{VI_REGISTER}{$register} .= $text;
+        }
+        else {
+            $w->{VI_REGISTER}{$register} = $text;
+        }
     }
 }
 
@@ -403,7 +439,6 @@ sub InsertKeypress {
     # Visual character mode
     elsif( $w->{VI_MODE} eq 'v' ) {
         if( $key eq ESC ) {
-            $w->tagRemove( 'sel', '1.0', 'end' );
             $w->viMode('n');
         }
         else {
@@ -417,7 +452,6 @@ sub InsertKeypress {
     # Visual line mode
     elsif( $w->{VI_MODE} eq 'V' ) {
         if( $key eq ESC ) {
-            $w->tagRemove( 'sel', '1.0', 'end' );
             $w->viMode('n');
         }
         else {
@@ -459,20 +493,21 @@ sub InsertKeypress {
             else {
                 chop $w->{VI_PENDING};
             }
+            $w->SetCursor( $w->vi_fslash() );
         }
         elsif( $key eq "\n" ) {
             $w->vi_fslash_end;
             $w->viMode('n');
-            return;
         }
         elsif( $key eq ESC ) {
             $w->viMode('n');
+            $w->SetCursor( $w->vi_fslash() );
         }
         else {
             $w->{VI_PENDING} .= $key;
+            $w->SetCursor( $w->vi_fslash() );
         }
-        $w->SetCursor( $w->vi_fslash() );
-        $w->{VI_KEYS} |= F_STAT;
+        $w->{VI_FLAGS} |= F_STAT;
     }
     # Insert mode
     elsif( $w->{VI_MODE} eq 'i' ) {
@@ -483,7 +518,31 @@ sub InsertKeypress {
                 if( $w->compare( 'insert', '!=', 'insert linestart' ) );
         }
         elsif( $key eq BKSP ) {
-            $w->delete( "insert -1c" );
+            if( $settings{softtabstop} > 1 && ' ' eq $w->get( 'insert' ) ) {
+                my $col = $w->index('insert');
+                (undef,$col) = split /\./, $col;
+                
+                if( $col > 0 ) {
+                    $col = $col % $settings{softtablstop} || $settings{softtabstop};
+                    my $txt = $w->get( "insert - $col c", "insert" );
+                    $txt =~ /\s*$/;
+                    $col = length($1) || 1;
+                }
+                else {
+                    $col = 1;
+                }
+                $w->delete( "insert - $col c" );
+            }
+            else {
+                $w->delete( "insert -1c" );
+            }
+        }
+        elsif( $key eq TAB && $settings{softtabstop} ) {
+            my $col = $w->index('insert');
+            (undef,$col) = split /\./, $col;
+            # Perl's modulus is well behaved so this works fine
+            $col = -$col % $settings{softtabstop};
+            $w->insert( 'insert', ' ' x $col );
         }
         else {
             $w->insert( 'insert', $key );
@@ -512,19 +571,21 @@ sub InsertKeypressNormal {
     my ($w,$key) = @_;
     my $res;
 
-    $w->{VI_PENDING} .= $key;       # add to pending key strokes
+    my $keys = $w->{VI_PENDING} . $key;
+    $w->{VI_PENDING} = '';              # Assume command will work
 
-    eval { $res = $w->EvalKeys(); };# try to process as a command
+    eval { $res = $w->EvalKeys($keys); };# try to process as a command
 
     if( $@ ) {
-        die if $@ !~ /^VI_/;        # wasn't our exception
+        die $@ if $@ !~ /^VI_/;         # wasn't our exception
 
-        if( $@ eq X_BAD_STATE ) {   # panic, restore known state
-            $w->{VI_PENDING} = '';
+        if( $@ eq X_NO_KEYS ) {         # Restore pending keys
+            $w->{VI_PENDING} = $keys;
         }
     }
-    else {                          # The command completed
-        $w->{VI_PENDING} = '';
+    elsif ( lc $w->{VI_MODE} eq 'v' ) {
+        # hack, clear visual mode after command
+        ref $res or $w->viMode('n');
     }
 
     $w->{VI_FLAGS} |= F_STAT;
@@ -590,15 +651,33 @@ sub EvalCommand {
 
     my ($cmd,$force,$arg);
 
-    if( not $w->{VI_PENDING} =~ /
+    local $_ = $w->{VI_PENDING};
+    my @range;
+
+    # First attempt to extract a range
+    while (1) {
+        if( s/^\.// ) { push @range, 'insert' }
+        elsif( s/^\$// ) { push @range, 'end' }
+        elsif( s/^\%// ) { push @range, '1.0'; push @range, 'end' }
+        elsif( s/^(\d+)// ) { push @range, "$1.0"; }
+        elsif( s/^\'(.)// ) { push @range, "VI_MARK_" . ($names{$1}||$1) }
+        else { last }
+
+        while( s/^([+-]\d+)// ) { $range[$#range] .= " $1 lines" }
+
+        if( s/^[,;]// ) { redo }
+    };
+
+    if( not m/
         ^           # colon is not in the buffer
-        (\S+)       # followed by the name of the command
+        (\w*)       # followed by the name of the command
         (!?)        # optional ! to force the command
         (?:
-            \s+     # space between command and argument
+            \s*     # space between command and argument
             (.*)    # everything else is the argument
         )?          # argument is optional
-        $/x )
+        $
+        /x )
     {
        return;      # Something's really screwed up 
     }
@@ -609,7 +688,7 @@ sub EvalCommand {
 
     return unless exists $w->{VI_MAPS}{c}{$cmd};
 
-    $w->{VI_MAPS}{c}{$cmd}( $w, $force, $arg );
+    $w->{VI_MAPS}{c}{$cmd}( $w, $force, $arg, \@range );
 }
 
 # All the normal-mode commands ######################################
@@ -915,9 +994,6 @@ sub vi_n_t {
     return [ "insert +$ofst c -1c", 'char', 'inc' ];
 }
 
-# At the moment, the undo feature is a bit hacky.  The first undo
-# removes the undo glob created for the u command itself.
-#
 sub vi_n_u {
     my ($w,$k,$n,$r,$m) = @_;
     $w->undo;
@@ -928,6 +1004,7 @@ sub vi_n_v {
     die X_BAD_STATE if $m;
     $w->viMode('v');
     $w->{VI_VISUAL_START} = $w->index('insert');
+    return ['insert','char','inc'];
 }
 
 sub vi_n_y {
@@ -982,10 +1059,46 @@ sub vi_n_y {
     my $text = $w->get( $start, $end );
 
     if( not defined $r ) {
-        $r = '0';
+        $r = '';
     }
 
     $w->registerStore( $r, $text );
+}
+
+sub vi_n_E {
+    my ($w,$k,$n,$reg,$m) = @_;
+    my $l;
+    $n ||= 1;
+
+    my $ofst = 0;
+    my ($r,$c) = split /\./, $w->index('insert');
+    my ($maxr,$maxc) = split /\./, $w->index('end');
+
+    my $line = $w->get( 'insert linestart', 'insert lineend' );
+    pos($line) = $c;
+    while( $n > 0 ) {
+        # |  abc
+        # a|bc
+        # |c def
+        if( $line =~ /\G.\s*\S*(?=\S)/gc ) { $n--; next; }
+
+        $r++;
+
+        # Can't go past end
+        if( $r > $maxr ) {
+            $r = $maxr;
+            $c = $maxc;
+            last;
+        }
+
+        $line = $w->get( "$r.0", "$r.0 lineend" );
+
+        # Catches cases of 1-letter word at start of line
+        if( $line =~ /^\s*\S*(?=\S)/gc ) { $n--; }
+    }
+
+    $c = pos($line) || 0;
+    return [ "$r.$c", "char", "exc" ];
 }
 
 sub vi_n_G {
@@ -1009,7 +1122,50 @@ sub vi_n_V {
 
     $w->viMode('V');
     $w->{VI_VISUAL_START} = $w->index('insert');
-    $w->tagAdd( 'sel', 'insert linestart', 'insert lineend' );
+    #$w->tagAdd( 'sel', 'insert linestart', 'insert lineend' );
+    return ['insert'];
+}
+
+sub vi_n_W {
+    my ($w,$k,$n,$reg,$m) = @_;
+    my $l;
+    $n ||= 1;
+
+    my $ofst = 0;
+    my ($r,$c) = split /\./, $w->index('insert');
+    my ($maxr,$maxc) = split /\./, $w->index('end');
+
+    my $line = $w->get( 'insert linestart', 'insert lineend' );
+    pos($line) = $c;
+    while( $n > 0 ) {
+        # If there is another word on this line
+        if( $line =~ /\G\S*\s+(?=\S)/gc ) { $n--; next; }
+
+        # Get the next line
+        $r++;
+
+        # Can't go past end
+        if( $r > $maxr ) {
+            $r = $maxr;
+            $c = $maxc;
+            last;
+        }
+
+        $line = $w->get( "$r.0", "$r.0 lineend" );
+        # Skip leading whitespace
+        if( $line =~ /^\s+/gc ) {
+            # Only counts as a word if there is a non-whitespace letter
+            $n-- if $line =~ /\G\S/gc;
+        }
+        else {
+            # No leading whitespace, either empty line or start of word
+            # Both count as a word
+            $n--;
+        }
+    }
+
+    $c = pos($line) || 0;
+    return [ "$r.$c", "char", "exc" ];
 }
 
 sub vi_n_backtick {
@@ -1017,6 +1173,7 @@ sub vi_n_backtick {
 
     die X_NO_KEYS if $k eq '';
 
+    $k = $names{$k} || $k;
     return unless $w->markExists( "VI_MARK_$k" );
 
     return [ "VI_MARK_$k", 'char', 'exc' ];
@@ -1040,9 +1197,6 @@ sub vi_n_at {
         $n--;
         $w->InsertKeypress($_) for @keys;
     }
-
-    # Any remaining keys should stay in the buffer
-    die X_NO_KEYS;
 }
 
 sub vi_n_dollar {
@@ -1119,7 +1273,16 @@ sub vi_n_colon {
     my ($w,$k,$n,$r,$m) = @_;
     die X_BAD_STATE if $m;
 
-    $w->viMode('c');
+    my $old = $w->viMode('c');
+    if( 'v' eq lc $old ) {
+        $w->{VI_PENDING} = "'<,'>";
+    }
+    elsif( $n ) {
+        $n--;
+        $w->{VI_PENDING} = $n ? ".,.+$n" : '.';
+    }
+
+    return ['insert'];
 }
 
 sub vi_n_fslash {
@@ -1186,6 +1349,27 @@ sub vi_c_ {
 
 =cut
 
+sub vi_c_none {
+    my ($w,$force,$arg,$range) = @_;
+
+    if( $force ) {
+        return unless 2 == scalar @$range;
+
+        my $s = $w->index($range->[0] . ' linestart');
+        my $e = $w->index($range->[1] . ' lineend' );
+
+        my $res = $w->Callback( '-systemcommand', 'filter', $arg, $w->get($s,$e) );
+        return unless defined $res;
+
+        $w->delete( $s, $e );
+        $w->insert( $s, $res );
+    }
+    else {
+        return unless @$range;
+        $w->SetCursor( pop @$range );
+    }
+}
+
 sub vi_c_quit {
     my ($w,$force,$arg) = @_;
 
@@ -1204,6 +1388,32 @@ sub vi_c_nohlsearch {
     my ($w,$force,$arg) = @_;
 
     $w->tagRemove( 'VI_SEARCH', '1.0', 'end' );
+}
+
+sub vi_c_set {
+    my ($w,$force,$arg) = @_;
+
+    if( $arg =~ /^\s*(\w+)\?$/ ) {
+        my $value;
+        for my $key ( sort keys %settings ) {
+            next if 'SCALAR' eq ref $settings{$key};
+            $value = $settings{$key};
+            next if $value->[0] eq $value->[1];
+            $w->setMessage( "$key=$value->[0]" );
+        }
+    }
+    elsif( $arg =~ /^\s*(\w+)[=:](.*)/ ) {
+        my ($key,$value) = ($1,$2);
+        if( not exists $settings{$key} ) {
+            $w->setError( "Setting '$key' does not exist." );
+            return;
+        }
+        
+        $key = ${$settings{$key}} if 'SCALAR' eq ref $settings{$key};
+
+        $value += 0 if $settings{$key}[2] eq 'int';
+        $settings{$key}[0] = $value;
+    }
 }
 
 sub vi_c_split {
@@ -1260,8 +1470,12 @@ Callback invoked when error messages need to be displayed.
 
 Callback invoked when the parent application needs to take action.  If you return 'undef' the widget will pretend that command doesn't exist and do nothing.  Currently, the argument can be:
 
-    'quit'      The :quit command has been entered
+    'filter'    Text is to be filtered from the :! command
+                The command and text are passed as arguments.
     'split'     :split (see EXPERIMENTAL FEATURES below)
+    'quit'      The :quit command has been entered
+
+See the demonstration program for examples.
 
 =back
 
@@ -1360,6 +1574,7 @@ All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on th
     t - move one character before the next occurrence of 'character'
     u - undo
     v - enter visual mode
+    w - advance one word [1]
     x - delete character
     y - yank over 'motion' into 'register'
         yy - yank a line
@@ -1368,6 +1583,7 @@ All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on th
     G - jump to 'count' line
     O - open line above cursor
     V - enter visual line mode
+    W - advance one word
 
     0 - go to start of current line
     @ - execute keys from register
@@ -1375,9 +1591,10 @@ All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on th
     $ - go to last character of current line
     % - find matching bracketing character
     : - enter command mode
-    / - search using a regex
+    / - search using a regex [2]
 
-NOTE: The / command is different from Vi in that is uses a perl-style regular expression.
+[1] The w command is currently mapped to W
+[2] The / command is different from Vi in that is uses a perl-style regular expression.
 
 =head3 Visual Mode
 
@@ -1387,17 +1604,36 @@ There are currently no commands defined specific to visual mode.
 
 =head3 Command Mode
 
+    :
+        - places the cursor at the last item in range
     :map sequence commands
         - maps sequence to commands
     :noh
     :nohl
     :nohlsearch
         - clear the highlighting from the last search
-    :split
-        - split the window
     :quit
     :q
         - signal quit
+    :set
+        - display all non-default settings
+    :set setting=value
+        - set the value of a setting
+    :split
+        - split the window
+    :!program
+        - filter text through program
+
+Commands may have a ! suffix to force completion (e.g. :map! with map a command even if it will overwrite existing mappings).  They may also be prefixed with a range of text to operate on:
+
+    .           # The current line number
+    $           # The final line
+    %           # The entire text, same as 1,$
+    NUM         # Line number NUM
+    'x          # The line containing mark x
+    RANGE+NUM   # NUM lines after RANGE
+
+Multiple values may be separated with , or ; (Tk::TextVi does not currently distinguish between the delimiters).
 
 =head2 EXPERIMENTAL COMMANDS
 
@@ -1419,9 +1655,9 @@ Where $widget is the Tk::TextVi object, $keys are any key presses entered after 
 
 Commands receive arguments in the following format:
 
-    my ( $widget, $forced, $argument ) = @_;
+    my ( $widget, $forced, $argument, $range ) = @_;
 
-$forced is set to a true value if the command ended with an exclamation point.  $argument is set to anything that comes after the command.
+$forced is set to a true value if the command ended with an exclamation point.  $argument is set to anything that comes after the command.  $range is an array reference that contains any line numbers removed from the front of the command.  The elements are valid input to Tk::Text::index.
 
 To move the cursor a normal-mode command should return an array reference.  The first parameter is a string representing the new character position in a format suitable to Tk::Text.  The second is either 'line' or 'char' to specify line-wise or character-wise motion.  Character-wise motion should also specific 'inc' or 'exc' for inclusive or exclusive motion as the third parameter.
 

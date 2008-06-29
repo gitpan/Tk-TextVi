@@ -1,5 +1,21 @@
 Revision history for Tk-TextVi
 
+0.013   30 Jun 2009
+        Added normal-mode W and E commands
+
+        Added command-mode ! and set commands
+
+        Added the < and > marks
+
+        command-mode commands may take a range
+
+        Capital letter registers now append when written to
+
+        Added setting shiftwidth
+
+        Bug fix with normal-mode / where the status line was
+        not redisplayed.
+
 0.012   18 May 2008
         Several errors in the POD are fixed (Gratia, Michal Spacek).
 
