@@ -11,9 +11,17 @@ use warnings;
 
 use Tk;
 use Tk::TextVi;
-use Test::Simple tests => 24;
+use Test::More;
 
-my $mw = new MainWindow;
+my $mw = eval { new MainWindow };
+
+if( $mw ) {
+    plan tests => 24;
+}
+else {
+    print "1..0 # SKIP: Can't test without working Tk.\n";
+}
+
 my $t = $mw->TextVi();
 
 $t->Contents( <<END );

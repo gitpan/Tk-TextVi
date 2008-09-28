@@ -1,6 +1,23 @@
 Revision history for Tk-TextVi
 
-0.013   30 Jun 2009
+0.014   28 Sep 2008
+        Added normal-mode R and ~ commands
+
+        r command now works in visual mode
+
+        Added Replace mode
+
+        Example of a composite widget provided in EditorVi.pm
+
+        softtabstop settings had numerous bugs, was missing some behavior
+        and was not documented.
+
+        Some other documentation updates.
+
+        Tests no longer blow up when Tk can't function at all and the
+        script blames the tester who lied about their Tk ability.
+
+0.013   30 Jun 2008
         Added normal-mode W and E commands
 
         Added command-mode ! and set commands

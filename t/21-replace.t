@@ -1,7 +1,7 @@
 #
 # Tests for the replace operations
 # 
-# r
+# r R ~
 #
 
 use strict;
@@ -9,9 +9,16 @@ use warnings;
 
 use Tk;
 use Tk::TextVi;
-use Test::Simple tests => 3;
+use Test::More;
 
-my $mw = new MainWindow;
+my $mw = eval { new MainWindow };
+
+if( $mw ) {
+    plan tests => 7;
+}
+else {
+    print "1..0 # SKIP: Can't test without working Tk.\n";
+}
 my $t = $mw->TextVi();
 
 my $text = <<END;
@@ -66,4 +73,48 @@ With a blank line:
 This line contains four i's
 0123456789
 END
+
+# R
+test( '1.0', 'RReplace' );
+ok( <<END eq $t->Contents, 'Testing replace mode' );
+Replace Tk::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
+0123456789
+END
+
+test( '1.3', "R123\cH\cH" );
+ok( <<END eq $t->Contents, 'Backspace restores overtyped characters' );
+Tes1ing Tk::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
+0123456789
+END
+
+test( '1.3', "R\cH" );
+ok( <<END eq $t->Contents, 'Backspace when no replaced chars' );
+Testing Tk::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
+0123456789
+END
+
+# ~
+
+test( '1.7', "~~~" );
+ok( <<END eq $t->Contents, 'Toggle case' );
+Testing tK::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
+0123456789
+END
+
 

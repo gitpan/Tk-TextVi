@@ -3,6 +3,7 @@ MANIFEST
 Makefile.PL
 README
 lib/Tk/TextVi.pm
+lib/Tk/EditorVi.pm
 t/00-load.t
 t/10-move.t
 t/11-mark.t
@@ -17,5 +18,6 @@ t/33-vline.t
 t/40-register.t
 t/41-macro.t
 t/60-info.t
+t/80-setting.t
 bin/TextViDemo.pl
 META.yml                                 Module meta-data (added by MakeMaker)

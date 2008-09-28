@@ -11,6 +11,8 @@ To install this module, run the following commands:
 	make test
 	make install
 
+An additional module EditorVi.pm is included, but not installed be default.
+
 SUPPORT AND DOCUMENTATION
 
 After installing, you can find documentation for this module with the

@@ -3,7 +3,7 @@ package Tk::TextVi;
 use strict;
 use warnings;
 
-our $VERSION = '0.013';
+our $VERSION = '0.014';
 
 #use Data::Dump qw|dump|;
 
@@ -40,7 +40,7 @@ my %settings = (
     # name => [ value, default, type ]
     # name => \'longname'
 
-    'softtabstop' => [ 0, 0, 'int' ],
+    'softtabstop' => [ 4, 4, 'int' ],
     'sts' => \'softtabstop',
 );
 
@@ -77,11 +77,13 @@ my %map = (
         E => \&vi_n_E,                              # 12-word
         G => \&vi_n_G,                              # 10-move
         O => \&vi_n_O,                              # 30-insert
+        R => \&vi_n_R,                              # 21-replace
         V => \&vi_n_V,                              # 33-vline
         W => \&vi_n_W,                              # 12-word
 
         0 => [ 'insert linestart', 'char', 'inc' ], # 10-move
 
+        '~' => \&vi_n_tilde,                        # 21-replace
         '`' => \&vi_n_backtick,                     # 11-mark
         '@' => \&vi_n_at,                           # 41-macro
         '$' => \&vi_n_dollar,                       # 10-move
@@ -112,6 +114,7 @@ my %map = (
         k => \&vi_n_k,
         l => \&vi_n_l,
         t => \&vi_n_t,
+        r => \&vi_n_r,
         w => \'W',
 
         E => \&vi_n_E,
@@ -119,6 +122,8 @@ my %map = (
         W => \&vi_n_W,
 
         0 => [ 'insert linestart', 'char', 'inc' ],
+
+        '~' => \&vi_n_tilde,
         '`' => \&vi_n_backtick,
         '$' => \&vi_n_dollar,
         '%' => \&vi_n_percent,
@@ -264,9 +269,10 @@ sub viMode {
 
     if( defined $mode ) {
         croak "Tk::TextVi received invalid mode '$mode'"
-            if $mode !~ m[ ^ [nicvV/] $ ]x;
+            if $mode !~ m[ ^ [nicvVR/] $ ]x;
         $w->{VI_MODE} = $mode;
         $w->{VI_PENDING} = '';
+        $w->{VI_REPLACE_CHARS} = '';
         $w->tagRemove( 'sel', '1.0', 'end' );
 
         # XXX: Hack
@@ -410,6 +416,16 @@ sub setError {
     $w->{VI_FLAGS} |= F_ERR;
 }
 
+sub settingGet {
+    my ($w,$key) = @_;
+
+    # TODO: decide what to do about widget-specific vs class settings
+    # possibly something like Vim's b: vs g:
+
+    $key = ${ $settings{$key} } if 'SCALAR' eq ref $settings{$key};
+    return $settings{$key}[0];
+}
+
 # Handle keyboard input
 #
 # Replaces method in Tk::Text
@@ -518,33 +534,71 @@ sub InsertKeypress {
                 if( $w->compare( 'insert', '!=', 'insert linestart' ) );
         }
         elsif( $key eq BKSP ) {
-            if( $settings{softtabstop} > 1 && ' ' eq $w->get( 'insert' ) ) {
+            my $sts = $w->settingGet( 'softtabstop' );
+            if( $sts > 1 && ' ' eq $w->get( 'insert -1c' ) ) {
                 my $col = $w->index('insert');
                 (undef,$col) = split /\./, $col;
                 
                 if( $col > 0 ) {
-                    $col = $col % $settings{softtablstop} || $settings{softtabstop};
+                    $col = $col % $sts || $sts;
                     my $txt = $w->get( "insert - $col c", "insert" );
-                    $txt =~ /\s*$/;
+                    $txt =~ /(\s*)$/;
                     $col = length($1) || 1;
                 }
                 else {
                     $col = 1;
                 }
-                $w->delete( "insert - $col c" );
+                $w->delete( "insert - $col c", 'insert' );
             }
             else {
                 $w->delete( "insert -1c" );
             }
         }
-        elsif( $key eq TAB && $settings{softtabstop} ) {
-            my $col = $w->index('insert');
-            (undef,$col) = split /\./, $col;
-            # Perl's modulus is well behaved so this works fine
-            $col = -$col % $settings{softtabstop};
-            $w->insert( 'insert', ' ' x $col );
+        elsif( $key eq TAB ) {
+            my $sts = $w->settingGet( 'softtabstop' );
+
+            if( $sts > 0 ) {
+                my $col = $w->index('insert');
+                (undef,$col) = split /\./, $col;
+                # Perl's modulus is well behaved so this works fine
+                $col = (-$col % $sts) || $sts;
+                $w->insert( 'insert', ' ' x $col );
+            }
+            else {
+                $w->insert( 'insert', "\t" );
+            }
         }
         else {
+            $w->insert( 'insert', $key );
+        }
+    }
+    elsif( $w->{VI_MODE} eq 'R') {
+        if( $key eq ESC ) {
+            $w->addGlobEnd;
+            $w->viMode('n');
+            $w->SetCursor( 'insert -1c' )
+                if( $w->compare( 'insert', '!=', 'insert linestart' ) );
+        }
+        elsif( $key eq BKSP ) {
+            my $r = chop $w->{VI_REPLACE_CHARS};
+            if( $r ne '' ) {
+                $w->delete( "insert -1c" );
+                if( $r ne "\0" ) {
+                    $w->insert( 'insert', $r );
+                    $w->SetCursor( 'insert -1c' );
+                }
+            }
+            else {
+                $w->SetCursor( 'insert -1c' );
+            }
+        }
+        elsif( $w->get( 'insert' ) ne "\n" ) {
+            $w->{VI_REPLACE_CHARS} .= $w->get( 'insert' );
+            $w->delete( 'insert' );
+            $w->insert( 'insert', $key );
+        }
+        else {
+            $w->{VI_REPLACE_CHARS} .= "\0";
             $w->insert( 'insert', $key );
         }
     }
@@ -965,9 +1019,13 @@ sub vi_n_r {
         my $start = $w->index('sel.first');
         my $text = $w->get( $start, 'sel.last' );
         $text =~ s/./$k/g;  # no /s newlines stay intact!
+
+        # Save idx, about to delete the selection
+        my $idx = $w->index( 'sel.first' );
+
         $w->delete( $start, 'sel.last' );
         $w->insert( $start, $text );
-        $w->SetCursor( 'sel.first' );
+        $w->SetCursor( $idx );
     }
     else {
         # Grrr.  Tk::Text moves the mark when I want to insert after it.
@@ -1116,6 +1174,12 @@ sub vi_n_O {
     $w->viMode('i');
 }
 
+sub vi_n_R {
+    my ($w,$k,$n,$r,$m) = @_;
+    die X_NO_MOTION if $m;
+    $w->viMode('R');
+}
+
 sub vi_n_V {
     my ($w,$k,$n,$r,$m) = @_;
     die X_BAD_STATE if $m;
@@ -1166,6 +1230,34 @@ sub vi_n_W {
 
     $c = pos($line) || 0;
     return [ "$r.$c", "char", "exc" ];
+}
+
+sub vi_n_tilde {
+    my ($w,$k,$n,$r,$m) = @_;
+
+    die X_BAD_STATE if $m;
+
+    my ($start,$end,$chars);
+
+    if( $w->{VI_MODE} =~ /v/i ) {
+        $start = 'sel.first';
+        $end = 'sel.last';
+    }
+    else {
+        $start = 'insert';
+        $end = 'insert +1c';
+    }
+
+    $start = $w->index( $start );       # save absolute position of start
+    $end = $w->index( $end );
+
+    $chars = $w->get( $start, $end );
+    $w->delete( $start, $end );
+
+    # The world was a whole lot simpler before unicode...
+    $chars =~ s/([[:upper:]])|([[:lower:]])/defined $1 ? lc $1 : uc $2/ge;
+
+    $w->insert( $start, $chars );
 }
 
 sub vi_n_backtick {
@@ -1394,13 +1486,9 @@ sub vi_c_set {
     my ($w,$force,$arg) = @_;
 
     if( $arg =~ /^\s*(\w+)\?$/ ) {
-        my $value;
-        for my $key ( sort keys %settings ) {
-            next if 'SCALAR' eq ref $settings{$key};
-            $value = $settings{$key};
-            next if $value->[0] eq $value->[1];
-            $w->setMessage( "$key=$value->[0]" );
-        }
+        my $key = $1;
+        my $value = $w->settingGet( $key );
+        $w->setMessage( "$key=$value" );
     }
     elsif( $arg =~ /^\s*(\w+)[=:](.*)/ ) {
         my ($key,$value) = ($1,$2);
@@ -1445,6 +1533,8 @@ Tk::TextVi - Tk::Text widget with Vi-like commands
 =head1 DESCRIPTION
 
 Tk::TextVi is a Tk::TextUndo widget that replaces InsertKeypress() to handle user input similar to vi.  All other methods remain the same (and most code should be using $text->insert( ... ) rather than $text->InsertKeypress()).  This only implements the text widget and key press logic; the status bar must be drawn by the application (see TextViDemo.pl for an example of this).
+
+To use Tk::TextVi as a drop-in replacement for other text widgets, see the module Tk::EditorVi which encapsulates the status bar into a composite widget.  (This module is included in the Tk::TextVi distribution, but is not installed by default.)
 
 Functions in Vi that require interaction with the system (such as reading or writing files) are not (currently) handled by this module (This is a feature since you probably don't want :quit to do exactly that).
 
@@ -1500,6 +1590,7 @@ Returns the current mode of the widget:
     'i'     # insert
     'n'     # normal
     'c'     # command
+    'R'     # replace
     'v'     # visual character
     'V'     # visual line
 
@@ -1509,7 +1600,7 @@ There is also a fake mode:
 
 If the 'q' command (record macro) is currently active, a q will be appended to the mode.
 
-If the $mode parameter is supplied, it will set the mode as well.  Any pending keystrokes will be cleared (this brings the widget to a known state).
+If the $mode parameter is supplied, it will set the mode as well.  Any pending keystrokes will be cleared (this brings the widget to a known state).  Macro-recording or incremental search cannot be enabled from this function.
 
 =item $text->viPending;
 
@@ -1547,6 +1638,17 @@ You attempt to map to a sequence that starts with an existing command (for examp
 
 All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on this as these bindings will be replaced once the vi meaning of those keystrokes is implemented.
 
+=head1 SETTINGS
+
+=over
+
+=item softtabstop
+=item sts
+
+This setting is a combination of the softtabstop and expandtab found in Vi/Vim.  Setting it to a non-zero value has the following effects:  The backspace key will delete spaces to reach a column number that is an even multiple of the softtabstop value; the tab key will insert places to reach the next column that is an even multiple of the softtabstop value.  When set to zero, backspace always deletes one character and tab inserts a literal tab.  (default value is 4)
+
+=back
+
 =head1 COMMANDS
 
 =head2 Supported Commands
@@ -1582,19 +1684,21 @@ All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on th
     D - delete until end of line
     G - jump to 'count' line
     O - open line above cursor
+    R - enter replace mode
     V - enter visual line mode
     W - advance one word
 
-    0 - go to start of current line
-    @ - execute keys from register
     ` - move cursor to 'mark'
+    ~ - toggle case of next character
+    @ - execute keys from register
     $ - go to last character of current line
     % - find matching bracketing character
+    0 - go to start of current line
     : - enter command mode
     / - search using a regex [2]
 
-[1] The w command is currently mapped to W
-[2] The / command is different from Vi in that is uses a perl-style regular expression.
+    [1] The w command is currently mapped to W
+    [2] The / command uses a perl regex not the vi or vim syntax
 
 =head3 Visual Mode
 
@@ -1615,14 +1719,17 @@ There are currently no commands defined specific to visual mode.
     :quit
     :q
         - signal quit
-    :set
-        - display all non-default settings
+    :set setting?
+        - prints the value of a setting [1]
     :set setting=value
         - set the value of a setting
     :split
         - split the window
     :!program
         - filter text through program
+
+    [1] :set does not display a setting's value as a result of the command
+        :set non-bool-setting.  The final ? must be supplied.
 
 Commands may have a ! suffix to force completion (e.g. :map! with map a command even if it will overwrite existing mappings).  They may also be prefixed with a range of text to operate on:
 
@@ -1709,9 +1816,13 @@ Store the contents of $text into the specified register.  The text will also be 
 
 Returns the text stored in a register
 
+=item $text->settingGet( $setting )
+
+Returns the value of the specified setting.
+
 =back
 
-=head1 BUGS
+=head1 BUGS AND CAVEATS
 
 If you find a bug in the handling of a vi-command, please try to produce an example that looks something like this:
 
@@ -1733,7 +1844,11 @@ If the bug relates to the location of the cursor after the command, note the dif
 
 =item *
 
-Using the mouse or $text->setCursor you place illegally place the cursor after the last character in the line.
+Using the mouse or $text->setCursor you may illegally place the cursor after the last character in the line.
+
+=item *
+
+Similarly, movement with the mouse or arrow keys can cause problems when a the state of the widget depends on cursor location.
 
 =item *
 
@@ -1760,6 +1875,12 @@ Normal-u undoes individual Tk::Text actions rather than vi-commands.
 This modules makes it much easier to commit the programmer's third deadly sin.
 
 =back
+
+=head1 SEE ALSO
+
+Tk::TextUndo and Tk::Text for details on the inherited functionality.
+
+:help index (in vim) for details on the commands emulated.
 
 =head1 AUTHOR
 
