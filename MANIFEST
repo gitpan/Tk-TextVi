@@ -3,7 +3,7 @@ MANIFEST
 Makefile.PL
 README
 lib/Tk/TextVi.pm
-lib/Tk/EditorVi.pm
+EditorVi.pm
 t/00-load.t
 t/10-move.t
 t/11-mark.t

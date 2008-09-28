@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Tk-TextVi
-version:             0.014
+version:             0.0141
 abstract:            Tk::Text widget with Vi-like commands
 license:             perl
 author:              

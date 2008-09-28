@@ -90,6 +90,10 @@ sub showstat {
         $left->configure( -text => '-- INSERT --'.$rec );
         $right->configure( -text => $keys );
     }
+    elsif( $mode eq 'R' ) {
+        $left->configure( -text => '-- REPLACE --'.$rec );
+        $right->configure( -text => $keys );
+    }
     elsif( $mode eq 'v' ) {
         $left->configure( -text => '-- VISUAL --'.$rec );
         $right->configure( -text => $keys );
