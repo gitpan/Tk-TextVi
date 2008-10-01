@@ -24,6 +24,7 @@ if( $mw ) {
 }
 else {
     print "1..0 # SKIP: Can't test without working Tk.\n";
+    exit;
 }
 my $t = $mw->TextVi();
 

@@ -8,6 +8,7 @@ WriteMakefile(
     VERSION_FROM        => 'lib/Tk/TextVi.pm',
     ABSTRACT_FROM       => 'lib/Tk/TextVi.pm',
     PL_FILES            => {},
+    PM                  => { 'lib/Tk/TextVi.pm' => '$(INST_LIBDIR)/TextVi.pm' },
     EXE_FILES           => [ 'bin/TextViDemo.pl' ],
     LICENSE             => 'perl',
     PREREQ_PM => {

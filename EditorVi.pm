@@ -121,7 +121,7 @@ The intent of this module is to provide a framework which can be easily modified
 
 =head1 ADVERTISED WIDGETS
 
-    scoll       The Tk::Scrolled composite widget
+    scroll      The Tk::Scrolled composite widget
     textvi      The Tk::TextVi widget
     left        The left status bar used for messages and status information
     right       The right status bar used for commands in progress

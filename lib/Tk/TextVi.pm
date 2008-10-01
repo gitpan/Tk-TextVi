@@ -3,7 +3,7 @@ package Tk::TextVi;
 use strict;
 use warnings;
 
-our $VERSION = '0.0142';
+our $VERSION = '0.0143';
 
 #use Data::Dump qw|dump|;
 

@@ -1,5 +1,7 @@
 Revision history for Tk-TextVi
 
+????  Forgot an exit in the test bailout.
+
 0.014   28 Sep 2008
         Added normal-mode R and ~ commands
 
@@ -19,6 +21,10 @@ Revision history for Tk-TextVi
 
         (0.0141 - built the tar with the wrong version of the demo file)
         (0.0142 - tar wasn't setting the permission bits right)
+        (0.0143 - this time for sure:
+                - fixed error in makefile.PL that installed EditorVi.pm
+                - fixed error in test that still failed on NIX
+                - fixed typo in documentation)
 
 0.013   30 Jun 2008
         Added normal-mode W and E commands
