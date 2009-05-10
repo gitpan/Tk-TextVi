@@ -57,30 +57,33 @@ sub Populate {
 
         $keys =~ s/([\x01-\x19])/'^'.chr(0x40+ord($1))/ge;
 
-        my $rec = (substr($mode,1,1) eq 'q') ? 'recording' : '';
-        $mode = substr $mode, 0, 1;
+        my $rec = (substr($mode,-1,1) eq 'q') ? 'recording' : '';
 
         $left->configure( -foreground => '#000000' );
 
-        if( $mode eq 'n' ) {
+        if( $mode =~ /^n/ ) {
             $left->configure( -text => ' '.$rec );
             $right->configure( -text => $keys );
         }
-        elsif( $mode eq 'c' ) {
+        elsif( $mode =~ /^c/ ) {
             $left->configure( -text => ':' . $keys );
         }
-        elsif( $mode eq '/' ) {
+        elsif( $mode =~ /^\// ) {
             $left->configure( -text => '/' . $keys );
         }
-        elsif( $mode eq 'i' ) {
+        elsif( $mode =~ /^in/ ) {
+            $left->configure( -text => '-- (insert) --'.$rec );
+            $right->configure( -text => $keys );
+        }
+        elsif( $mode =~ /^i/ ) {
             $left->configure( -text => '-- INSERT --'.$rec );
             $right->configure( -text => $keys );
         }
-        elsif( $mode eq 'v' ) {
+        elsif( $mode =~ /^v/ ) {
             $left->configure( -text => '-- VISUAL --'.$rec );
             $right->configure( -text => $keys );
         }
-        elsif( $mode eq 'V' ) {
+        elsif( $mode =~ /^V/ ) {
             $left->configure( -text => '-- VISUAL LINE --'.$rec );
             $right->configure( -text => $keys );
         }
@@ -97,6 +100,30 @@ sub Populate {
         $left->configure( -foreground => '#FF0000' );
         $left->configure( -text => $textvi->viError() );
     } );
+
+    my %commands;
+
+    $commands{quit} = sub { Tk::exit(0); };
+    $commands{q} = $commands{quit};
+
+    $commands{NOT_SUPPORTED} = sub {
+        $_[0]->setError("Unrecognised command :$_[1]" );
+    };
+
+    $commands{edit} = sub {
+        my ($w,$force,$arg) = @_;
+        local undef $/;
+        open my $fh, "<$arg" or do {
+            $w->Contents('');
+            return;
+        };
+        $w->Contents( <$fh> );
+        $w->SetCursor( '1.0' );
+        close $fh;
+    };
+    $commands{e} = $commands{edit};
+
+    $textvi->commands( %commands );
 }
 
 1;

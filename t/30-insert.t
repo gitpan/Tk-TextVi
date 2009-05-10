@@ -2,7 +2,7 @@
 # Tests insert mode
 #
 # a i o
-# O
+# A O
 
 use strict;
 use warnings;
@@ -14,7 +14,7 @@ use Test::More;
 my $mw = eval { new MainWindow };
 
 if( $mw ) {
-    plan tests => 7;
+    plan tests => 8;
 }
 else {
     print "1..0 # SKIP: Can't test without working Tk.\n";
@@ -98,6 +98,17 @@ With a blank line:
 
 This line contains four i's
 0123456789
+END
+
+
+test( '6.4', "A<append>\c[" );
+ok( <<END eq $t->Contents, 'append text at end of line' );
+Testing Tk::TextVi
+Some lines of sample text
+With a blank line:
+
+This line contains four i's
+0123456789<append>
 END
 
 

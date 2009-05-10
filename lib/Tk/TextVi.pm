@@ -3,7 +3,7 @@ package Tk::TextVi;
 use strict;
 use warnings;
 
-our $VERSION = '0.0143';
+our $VERSION = '0.015';
 
 #use Data::Dump qw|dump|;
 
@@ -48,6 +48,7 @@ my %settings = (
 my %map = (
     n => {
         a => \&vi_n_a,                              # 30-insert
+        b => \'B',
         d => \&vi_n_d,                              # 20-delete
         e => \'E',
         f => \&vi_n_f,                              # 13-findchar
@@ -73,17 +74,20 @@ my %map = (
         x => \'dl',                                 # 20-delete
         y => \&vi_n_y,                              # 40-register
 
+        A => \'$a',
+        B => \&vi_n_B,
         D => \'d$',                                 # 20-delete
         E => \&vi_n_E,                              # 12-word
         G => \&vi_n_G,                              # 10-move
+        I => \&vi_n_I,
         O => \&vi_n_O,                              # 30-insert
-        R => \&vi_n_R,                              # 21-replace
+        R => \&vi_n_R,
         V => \&vi_n_V,                              # 33-vline
         W => \&vi_n_W,                              # 12-word
 
         0 => [ 'insert linestart', 'char', 'inc' ], # 10-move
 
-        '~' => \&vi_n_tilde,                        # 21-replace
+        '~' => \&vi_n_tilde,
         '`' => \&vi_n_backtick,                     # 11-mark
         '@' => \&vi_n_at,                           # 41-macro
         '$' => \&vi_n_dollar,                       # 10-move
@@ -93,8 +97,6 @@ my %map = (
     },
     c => {
         '' => \&vi_c_none,
-        q => \&vi_c_quit,
-        quit => \&vi_c_quit,
         map => \&vi_c_map,
         noh => \&vi_c_nohlsearch,
         nohl => \&vi_c_nohlsearch,
@@ -116,6 +118,7 @@ my %map = (
         t => \&vi_n_t,
         r => \&vi_n_r,
         w => \'W',
+        y => \&vi_n_y,
 
         E => \&vi_n_E,
         G => \&vi_n_G,
@@ -147,6 +150,10 @@ sub ClassInit {
     $mw->bind( $self, '<Escape>',       [ 'InsertKeypress', ESC ] );
     $mw->bind( $self, '<Return>',       [ 'InsertKeypress', "\n" ] );
 
+    # Rebind the control keys to give characters
+    # TODO: Add remaining
+    $mw->bind( $self, '<Control-o>',    [ 'InsertKeypress', "\cO" ] );
+
     return $self;
 }
 
@@ -158,11 +165,13 @@ sub Populate {
 
     $w->{VI_PENDING} = '';      # Pending command
     $w->{VI_MODE} = 'n';        # Start in normal mode
+    $w->{VI_SUBMODE} = '';      # No submode
     $w->{VI_REGISTER} = { };    # Empty registers
     $w->{VI_SETTING} = { };     # No settings
     $w->{VI_ERROR} = [ ];       # Pending errors
     $w->{VI_MESSAGE} = [ ];     # Pending messages
     $w->{VI_FLAGS} = 0;         # Pending flags
+    $w->{VI_COMMANDS} = { };    # External commands
 
     # XXX: There might be a legit reason in the future to have two
     # Tk::TextVi widgets with different mappings.
@@ -174,8 +183,48 @@ sub Populate {
         -statuscommand  =>['CALLBACK','statusCommand', 'StatusCommand', 'NoOp'],
         -messagecommand =>['CALLBACK','messageCommand','MessageCommand','NoOp'],
         -errorcommand =>  ['CALLBACK','errorCommand',  'ErrorCommand',  'NoOp'],
-        -systemcommand => ['CALLBACK','systemCommand', 'SystemCommand', 'NoOp'],
+        -commands =>      ['METHOD',  'commands',      'Commands',      {} ],
     );
+}
+
+# Config commands
+sub commands {
+    my $w = shift;
+
+    if( @_ >= 2 ) {
+        if( @_ % 2 == 1 ) {
+            croak "Tk::TextVi commands() received odd number of arguments."
+        }
+
+        my %commands = @_;
+
+        for my $cmd ( keys %commands ) {
+            my $sub = $commands{$cmd};
+
+            if( 'CODE' eq ref $sub ) {
+                $w->{VI_COMMANDS}{$cmd} = $sub;
+            }
+            elsif( not defined $sub ) {
+                delete $w->{VI_COMMANDS}{$cmd};
+            }
+            else {
+                croak "Tk::TextVi commands() expected coderef or undef, got '$sub'";
+            }
+        }
+    }
+    elsif( @_ == 1 ) {
+        if( 'HASH' ne ref $_[0] ) {
+            croak "Tk::TextVi commands() expected hashref or pairs, got '$_[0]'";
+        }
+
+        for my $sub ( values %{ $_[0] } ) {
+            croak "Tk::TextVi commands() expected coderef, got '$sub'";
+        }
+
+        %{ $w->{VI_COMMANDS} } = %{ $_[0] };
+    }
+
+    return %{ $w->{VI_COMMANDS} };
 }
 
 # We don't want to lose the selection.
@@ -264,13 +313,14 @@ sub vi_split {
 
 sub viMode {
     my ($w, $mode) = @_;
-    my $rv = $w->{VI_MODE};
+    my $rv = $w->{VI_SUBMODE} . $w->{VI_MODE};
     $rv .= 'q' if defined $w->{VI_RECORD_REGISTER};
 
     if( defined $mode ) {
         croak "Tk::TextVi received invalid mode '$mode'"
             if $mode !~ m[ ^ [nicvVR/] $ ]x;
         $w->{VI_MODE} = $mode;
+        $w->{VI_SUBMODE} = '';
         $w->{VI_PENDING} = '';
         $w->{VI_REPLACE_CHARS} = '';
         $w->tagRemove( 'sel', '1.0', 'end' );
@@ -280,6 +330,7 @@ sub viMode {
             $w->{VI_FLAGS} |= F_STAT;
         }
         else {
+            # TODO: this is broken
             $w->Callback( '-statuscommand', $w->{VI_MODE}, $w->{VI_PENDING} );
         }
     }
@@ -441,7 +492,7 @@ sub InsertKeypress {
     if( $w->{VI_MODE} eq 'n' ) {
         # Escape cancels any command in progress
         if( $key eq ESC ) {
-            $w->viMode('n');
+            $w->viMode( $w->{VI_SUBMODE} || 'n' );
         }
         else {
             $res = $w->InsertKeypressNormal( $key );
@@ -568,8 +619,13 @@ sub InsertKeypress {
                 $w->insert( 'insert', "\t" );
             }
         }
+        elsif( $key eq "\cO" ) {
+            $w->viMode('n');
+            $w->{VI_SUBMODE} = 'i';
+        }
         else {
             $w->insert( 'insert', $key );
+            $w->see( 'insert' );
         }
     }
     elsif( $w->{VI_MODE} eq 'R') {
@@ -610,13 +666,16 @@ sub InsertKeypress {
     # XXX: HACK
     if( (caller)[0] ne 'Tk::TextVi' ) {
         $w->Callback( '-statuscommand',
-            $w->{VI_MODE} . (defined $w->{VI_RECORD_REGISTER} ? 'q' : ''),
+            $w->viMode,
             $w->{VI_PENDING} ) if( $w->{VI_FLAGS} & F_STAT );
         $w->Callback( '-messagecommand' ) if $w->{VI_FLAGS} & F_MSG ;
         $w->Callback( '-errorcommand' ) if $w->{VI_FLAGS} & F_ERR ;
 
         $w->{VI_FLAGS} = 0;
     }
+
+    # Command may have moved insert cursor out of window
+    $w->see('insert');
 }
 
 # Handles the command processing shared between Normal
@@ -640,6 +699,10 @@ sub InsertKeypressNormal {
     elsif ( lc $w->{VI_MODE} eq 'v' ) {
         # hack, clear visual mode after command
         ref $res or $w->viMode('n');
+    }
+    else {
+        # Restore mode
+        $w->viMode( $w->{VI_SUBMODE} ) if $w->{VI_SUBMODE};
     }
 
     $w->{VI_FLAGS} |= F_STAT;
@@ -692,7 +755,7 @@ sub EvalKeys {
         }
 
         # The above call took care of everything
-        die X_NO_KEYS;
+        return;
     }
 
     die X_BAD_STATE if $motion and 'ARRAY' ne ref $res;
@@ -740,9 +803,26 @@ sub EvalCommand {
     $force = 1 if $2;
     $arg = $3;
 
-    return unless exists $w->{VI_MAPS}{c}{$cmd};
+    # Built-in command
+    if( exists $w->{VI_MAPS}{c}{$cmd} ) {
+        $w->{VI_MAPS}{c}{$cmd}( $w, $force, $arg, \@range );
+    }
+    # External command
+    else {
+        $w->vi_c( $cmd, $force, $arg, \@range );
+    }
+}
 
-    $w->{VI_MAPS}{c}{$cmd}( $w, $force, $arg, \@range );
+sub vi_c {
+    my ($w,$cmd,@args) = @_;
+
+    if( exists $w->{VI_COMMANDS}{$cmd} ) {
+        return $w->{VI_COMMANDS}{$cmd}( $w, @args );
+    }
+    elsif( exists $w->{VI_COMMANDS}{NOT_SUPPORTED} ) {
+        return $w->{VI_COMMANDS}{NOT_SUPPORTED}( $w, $cmd, @args );
+    }
+    return;
 }
 
 # All the normal-mode commands ######################################
@@ -860,8 +940,12 @@ sub vi_n_ga {
     die X_BAD_STATE if $m;
 
     my $c = $w->get( 'insert' );
+    my $sc = $c;
+    if( ord($c) < 0x20 ) {
+        $sc = '^' . chr( ord($c) + 64 );
+    }
 
-    $w->setMessage(sprintf '<%s>  %d,  Hex %2x,  Oct %03o', $c, (ord($c)) x 3 );
+    $w->setMessage(sprintf '<%s>  %d,  Hex %02x,  Oct %03o', $sc, (ord($c)) x 3 );
 }
 
 sub vi_n_gg {
@@ -1123,6 +1207,27 @@ sub vi_n_y {
     $w->registerStore( $r, $text );
 }
 
+sub vi_n_B {
+    my ($w,$k,$n,$r,$m) = @_;
+    $n ||= 1;
+
+    my ($row,$col) = split /\./, $w->index('insert');
+    my $line = $w->get( 'insert linestart', 'insert lineend' );
+    while( $n > 0 ) {
+        # Check for back one word on this line
+        if( substr($line,0,$col) =~ /\S+\s*$/ ) {
+            $n--;
+            $col = $-[0];
+        }
+        else {
+            return [ '1.0', 'char', 'inc' ] if $row == 1;
+            $row--;
+            $line = $w->get( "$row.0", "$row.0 lineend" );
+        }
+    }
+    return [ "$row.$col", 'char', 'inc' ];
+}
+
 sub vi_n_E {
     my ($w,$k,$n,$reg,$m) = @_;
     my $l;
@@ -1164,6 +1269,18 @@ sub vi_n_G {
 
     return [ "$n.0", 'line' ] if $n;
     return [ 'end -1l linestart', 'line' ];
+}
+
+sub vi_n_I {
+    my ($w,$k,$n,$r,$m) = @_;
+    die X_BAD_STATE if $m;
+
+    # Skip cursor over initial blanks
+    my $line = $w->get( 'insert linestart', 'insert lineend' );
+    $line =~ /^(\s*)/;
+    $w->SetCursor( "insert +" . length($1) . "c" );
+
+    $w->viMode('i');
 }
 
 sub vi_n_O {
@@ -1450,7 +1567,7 @@ sub vi_c_none {
         my $s = $w->index($range->[0] . ' linestart');
         my $e = $w->index($range->[1] . ' lineend' );
 
-        my $res = $w->Callback( '-systemcommand', 'filter', $arg, $w->get($s,$e) );
+        my $res = $w->vi_c( '!', 1, $arg, [ $s, $e ] );
         return unless defined $res;
 
         $w->delete( $s, $e );
@@ -1460,12 +1577,6 @@ sub vi_c_none {
         return unless @$range;
         $w->SetCursor( pop @$range );
     }
-}
-
-sub vi_c_quit {
-    my ($w,$force,$arg) = @_;
-
-    $w->Callback( '-systemcommand', 'quit', $w );
 }
 
 sub vi_c_map {
@@ -1507,14 +1618,14 @@ sub vi_c_set {
 sub vi_c_split {
     my ($w,$force,$arg) = @_;
 
-    my $newwin = $w->Callback( '-systemcommand', 'split' );
+    my $newwin = $w->vi_c( 'split' );
     return if not defined $newwin;
 
     if( ref $newwin ) {
         $w->vi_split( $newwin );
     }
     else {
-        $w->setErr( $newwin );
+        $w->setError( $newwin );
     }
 }
 
@@ -1534,9 +1645,9 @@ Tk::TextVi - Tk::Text widget with Vi-like commands
 
 Tk::TextVi is a Tk::TextUndo widget that replaces InsertKeypress() to handle user input similar to vi.  All other methods remain the same (and most code should be using $text->insert( ... ) rather than $text->InsertKeypress()).  This only implements the text widget and key press logic; the status bar must be drawn by the application (see TextViDemo.pl for an example of this).
 
-To use Tk::TextVi as a drop-in replacement for other text widgets, see the module Tk::EditorVi which encapsulates the status bar into a composite widget.  (This module is included in the Tk::TextVi distribution, but is not installed by default.)
+To use Tk::TextVi as a drop-in replacement for other text widgets, see Tk::EditorVi which encapsulates Tk::TextVi and the status bar into a composite widget.  (This module is included in the Tk::TextVi distribution, but is not installed.)
 
-Functions in Vi that require interaction with the system (such as reading or writing files) are not (currently) handled by this module (This is a feature since you probably don't want :quit to do exactly that).
+Functions in Vi that require interaction with the system (such as reading or writing files) are not (currently) handled by this module (This is a feature since you probably don't want :quit to do exactly that).  Instead a callback is provided so that the application using the Tk::TextVi widget may decide how to act on them.
 
 The cursor in a Tk::Text widget is a mark placed between two characters.  Vi's idea of a cursor is placed on a non-newline character or a blank line.  Tk::TextVi treats the cursor as on (in the Vi-sense) the characters following the cursor (in the Tk::Text sense).  This means that $ will place the cursor just before the final character on the line.
 
@@ -1556,16 +1667,9 @@ Callback invoked when messages need to be displayed.
 
 Callback invoked when error messages need to be displayed.
 
-=item -systemcommand
+=item -commands
 
-Callback invoked when the parent application needs to take action.  If you return 'undef' the widget will pretend that command doesn't exist and do nothing.  Currently, the argument can be:
-
-    'filter'    Text is to be filtered from the :! command
-                The command and text are passed as arguments.
-    'split'     :split (see EXPERIMENTAL FEATURES below)
-    'quit'      The :quit command has been entered
-
-See the demonstration program for examples.
+Stores callbacks to handle command-mode commands which require external action.  See the commands() method below for more details.
 
 =back
 
@@ -1600,6 +1704,8 @@ There is also a fake mode:
 
 If the 'q' command (record macro) is currently active, a q will be appended to the mode.
 
+The insert-XXX modes (entered by Control-O from insert mode) are indicated by a two-character sequence, 'i' followed by the character of the mode that is active.  (e.g. 'in' is insert-normal).
+
 If the $mode parameter is supplied, it will set the mode as well.  Any pending keystrokes will be cleared (this brings the widget to a known state).  Macro-recording or incremental search cannot be enabled from this function.
 
 =item $text->viPending;
@@ -1632,17 +1738,51 @@ You attempt to map to a sequence that starts with an existing command (for examp
 
 =back
 
+=item $w->commands( $key => $sub, $key2 => $sub2 )
+=item $w->commands( { $key => $sub } )
+
+Sets the commands configuration setting.  In the first form, the given commands are updated with the listed commands.  Passing 'undef' for a subroutine will remove that entry.  In the second form, the passed hashref replaces the current command list.  The subroutine associated with the key 'NOT_SUPPORTED' is called when a typed command is not found in the hash.
+
+Each callback receives arguments of the form:
+
+    my ( $textvi, $force, $args, $range ) = @_;
+
+Where $textvi is the Tk::TextVi instance, $force is a true value if the command was followed by an exclaimation point, $args is any text following the command and $range is an arrayref giving any lines entered before the command.  The elements of this array are valid input to the Tk::Text->index() method.
+
+The NOT_SUPPORTED callback takes an additional argument containing the typed command:
+
+    my ( $textvi, $cmd, $force, $args, $range ) = @_;
+
+The following commands are defined by TextVi and may take different arguments than the above:
+
+=over
+
+=item split
+
+Called for the :split command.  The callback should return a Tk::TextVi instance to use as the newly created window.  See EXPERIMENTAL FEATURES below for more details.  None of the arguments are currently meaningful.
+
+=item !
+
+Called for the :! (filter) command.  $args is the command line and $range gives the lines to process ($textvi->get( @$range ) will return the text to be filtered).  The $force argument is not meaningful.
+
+The callback should return the text filtered through the given program specified, or undef if the text should not be modified (either due to an error executing the command, or the callback has updated the widget itself).
+
+=back
+
+All commands listed in the implemented commands that are not listed above are implemented internally and ignore these callbacks.
+
 =back
 
 =head2 Bindings
 
-All bindings present in Tk::Text are inherited by Tk::TextVi.  Do not rely on this as these bindings will be replaced once the vi meaning of those keystrokes is implemented.
+The bindings present in Tk::Text are inherited by Tk::TextVi, however it is not safe to rely on the control key bindings since many of these are used by vi.
 
 =head1 SETTINGS
 
 =over
 
 =item softtabstop
+
 =item sts
 
 This setting is a combination of the softtabstop and expandtab found in Vi/Vim.  Setting it to a non-zero value has the following effects:  The backspace key will delete spaces to reach a column number that is an even multiple of the softtabstop value; the tab key will insert places to reach the next column that is an even multiple of the softtabstop value.  When set to zero, backspace always deletes one character and tab inserts a literal tab.  (default value is 4)
@@ -1652,6 +1792,15 @@ This setting is a combination of the softtabstop and expandtab found in Vi/Vim. 
 =head1 COMMANDS
 
 =head2 Supported Commands
+
+=head3 Insert Mode
+
+Keypresses in insert mode are added to the text literally except for the
+following special keys.
+
+    Tab         Insert spaces up to the next softtabstop
+    Backspace   Delete a character or spaces back to the last softtabstop
+    Control-O   Enter a single normal-mode command
 
 =head3 Normal Mode
 
@@ -1716,9 +1865,6 @@ There are currently no commands defined specific to visual mode.
     :nohl
     :nohlsearch
         - clear the highlighting from the last search
-    :quit
-    :q
-        - signal quit
     :set setting?
         - prints the value of a setting [1]
     :set setting=value
@@ -1750,7 +1896,7 @@ First, :split is only included as a "look at this cool feature" do not count on 
 
 Second, none of the supporting commands are implemented.  :quit will not close only one window, and there are no Normal-^W commands.
 
-When the -systemcommand callback receives the 'split' action, it should return a new Tk::TextVi widget to the caller or a string to be used as an error message.  The module will copy the contents and make sure all the changes in the text are visible in both widgets.
+The split callback should return a new Tk::TextVi widget to the caller or a string to be used as an error message.  The module will copy the contents and make sure all changes in the text are visible in both widgets.
 
 =head2 WRITING COMMANDS
 
@@ -1766,7 +1912,7 @@ Commands receive arguments in the following format:
 
 $forced is set to a true value if the command ended with an exclamation point.  $argument is set to anything that comes after the command.  $range is an array reference that contains any line numbers removed from the front of the command.  The elements are valid input to Tk::Text::index.
 
-To move the cursor a normal-mode command should return an array reference.  The first parameter is a string representing the new character position in a format suitable to Tk::Text.  The second is either 'line' or 'char' to specify line-wise or character-wise motion.  Character-wise motion should also specific 'inc' or 'exc' for inclusive or exclusive motion as the third parameter.
+To move the cursor a normal-mode command should return an array reference.  The first parameter is a string representing the new character position in a format suitable to Tk::Text.  The second is either 'line' or 'char' to specify line-wise or character-wise motion.  Character-wise motion should also specify 'inc' or 'exc' for inclusive or exclusive motion as the third parameter.
 
 Scalar references will be treated as a sequence of keys to process.  All other return values will be ignored, but avoid returning references (any future expansion will use leave plain scalar returns alone).
 
@@ -1844,7 +1990,7 @@ If the bug relates to the location of the cursor after the command, note the dif
 
 =item *
 
-Using the mouse or $text->setCursor you may illegally place the cursor after the last character in the line.
+Using the mouse or $text->SetCursor you may illegally place the cursor after the last character in the line.
 
 =item *
 
@@ -1869,6 +2015,14 @@ Normal-/ and normal-n will not wrap after hitting end of file.
 =item *
 
 Normal-u undoes individual Tk::Text actions rather than vi-commands.
+
+=item *
+
+Insert-Control-O does not work with visual-mode
+
+=item *
+
+Keypresses that map to a movement command do not work as motions.
 
 =item *
 

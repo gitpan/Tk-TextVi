@@ -1,6 +1,18 @@
 Revision history for Tk-TextVi
 
-????  Forgot an exit in the test bailout.
+0.015   10 May 2009
+        Added normal-mode A, B, I
+
+        Added visual-mode y
+
+        Added insert-mode ^O
+
+        A subroutine can be tied to any :command.  This replaces the
+        -systemcommand callback.
+
+        Use ^X notation for control characters in ga
+
+        Bug fixed where keypresses from mappings weren't cleared.
 
 0.014   28 Sep 2008
         Added normal-mode R and ~ commands
